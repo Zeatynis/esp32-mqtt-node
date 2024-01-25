@@ -21,6 +21,15 @@
 
 static const char *TAG = "MQTTS_EXAMPLE";
 
+#define TXD (CONFIG_EXAMPLE_UART_TXD)
+#define RXD (CONFIG_EXAMPLE_UART_RXD)
+#define RTS (UART_PIN_NO_CHANGE)
+#define CTS (UART_PIN_NO_CHANGE)
+#define UART_PORT_NUM UART_NUM_2
+#define SDS011_TASK_STACK_SIZE    (TASK_STACK_SIZE)
+#define BUF_SIZE (1024)
+static const char *TAG = "UART TEST";
+
 extern const uint8_t mqtt_broker_cert_pem_start[]   asm("_binary_mqtt_broker_cert_pem_start");
 extern const uint8_t mqtt_broker_cert_pem_end[]   asm("_binary_mqtt_broker_cert_pem_end");
 
@@ -216,12 +225,51 @@ esp_err_t sntp(void){
 
 }
 
+static void sds011_task(void *arg)
+{
+    /* Configure parameters of an UART driver,
+     * communication pins and install the driver */
+    uart_config_t uart_config = {
+        .baud_rate = 9600,
+        .data_bits = UART_DATA_8_BITS,
+        .parity    = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+        .source_clk = UART_SCLK_DEFAULT,
+    };
+    int intr_alloc_flags = 0;
+
+#if CONFIG_UART_ISR_IN_IRAM
+    intr_alloc_flags = ESP_INTR_FLAG_IRAM;
+#endif
+
+    ESP_ERROR_CHECK(uart_driver_install(ECHO_UART_PORT_NUM, BUF_SIZE * 2, 0, 0, NULL, intr_alloc_flags));
+    ESP_ERROR_CHECK(uart_param_config(ECHO_UART_PORT_NUM, &uart_config));
+    ESP_ERROR_CHECK(uart_set_pin(ECHO_UART_PORT_NUM, ECHO_TEST_TXD, ECHO_TEST_RXD, ECHO_TEST_RTS, ECHO_TEST_CTS));
+
+    // Configure a temporary buffer for the incoming data
+    uint8_t *data = (uint8_t *) malloc(BUF_SIZE);
+
+    while (1) {
+        // Read data from the UART
+        int len = uart_read_bytes(ECHO_UART_PORT_NUM, data, (BUF_SIZE - 1), 20 / portTICK_PERIOD_MS);
+        if (len) {
+            data[len] = '\0';
+            ESP_LOGI(TAG, "Recv str: %s", (char *) data);
+            uxTaskGetStackHighWaterMark(NULL)
+        }
+    }
+}
+
 void app_main(void)
 {
     esp_log_level_set("*", ESP_LOG_ERROR);
     esp_log_level_set("network_connect", ESP_LOG_INFO);
     esp_log_level_set("network_common", ESP_LOG_INFO);
     esp_log_level_set("MQTTS_EXAMPLE", ESP_LOG_VERBOSE);
+    
+    xTaskCreate(sds011_task, "uart_SDS011_task", 1024, NULL, 10, NULL);
+
     
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(esp_netif_init());
